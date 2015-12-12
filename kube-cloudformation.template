@@ -1,0 +1,738 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Kubernetes stable v1.1.3 on EC2 powered by CoreOS 835.9.0 (stable)",
+  "Mappings" : {
+      "RegionMap" : {
+
+          "eu-central-1" : {
+              "AMI" : "ami-ffafb293"
+          },
+
+          "ap-northeast-1" : {
+              "AMI" : "ami-dae8c1b4"
+          },
+
+          "us-gov-west-1" : {
+              "AMI" : "ami-a98e33c8"
+          },
+
+          "sa-east-1" : {
+              "AMI" : "ami-4e981c22"
+          },
+
+          "ap-southeast-2" : {
+              "AMI" : "ami-eeadf58d"
+          },
+
+          "ap-southeast-1" : {
+              "AMI" : "ami-085a9a6b"
+          },
+
+          "us-east-1" : {
+              "AMI" : "ami-cbfdb2a1"
+          },
+
+          "us-west-2" : {
+              "AMI" : "ami-16cfd277"
+          },
+
+          "us-west-1" : {
+              "AMI" : "ami-0eacc46e"
+          },
+
+          "eu-west-1" : {
+              "AMI" : "ami-c26bcab1"
+          }
+
+      }
+  },
+  "Parameters": {
+    "KubernetesNodeInstanceType": {
+      "Description": "EC2 HVM instance type (m3.medium, etc).",
+      "Type": "String",
+      "Default": "t2.medium",
+      "AllowedValues": [
+        "m3.medium",
+        "m3.large",
+        "m4.large",
+        "c3.large",
+        "t2.medium",
+        "t2.large",
+	      "t2.small"
+      ],
+      "ConstraintDescription": "Must be a valid EC2 HVM instance type."
+    },
+    "EnvType" : {
+      "Description" : "Environment type.",
+      "Type" : "String"
+    }, 
+    "KubernetesMasterInstanceType" : {
+      "Description" : "EC2 HVM instance type (e.g t2.medium) for KubernetesMasterInstance.",
+      "Type" : "String",
+      "Default" : "t2.medium",
+      "AllowedValues": [
+        "m3.medium",
+        "m3.large",
+        "m4.large",
+        "c3.large",
+        "c3.xlarge",
+        "c3.2xlarge",
+        "t2.medium",
+        "t2.large",
+        "t2.small"
+      ],
+      "ConstraintDescription" : "Must be a valid EC2 HVM instance type."
+    },
+    "ServerGroup": {
+      "Description": "The name of the ServerGroup to be tagged for billing and reporting purpose",
+      "Type": "String",
+      "Default" : "VIA GO ProdCloud",
+      "ConstraintDescription" : "must specify VIA GO ProdCloud"
+    },
+    "OPSEMAIL": {
+      "Description": "OPS Email Address for sending notifications",
+      "Type": "String"
+    },
+    "ClusterDesiredSize": {
+      "Description": "Number of Desired nodes in Kubernetes cluster.",
+      "Type": "Number"
+    },
+    "ClusterMinSize": {
+      "Description": "Number of Minimum nodes in Kubernetes cluster.",
+      "Type": "Number"
+    },
+    "ClusterMaxSize": {
+      "Description": "Number of Maximum nodes in Kubernetes cluster.",
+      "Type": "Number"
+    },
+    "AllowAccessFrom": {
+      "Description": "The net block (CIDR) that SSH is available to.",
+      "Type": "String"
+    },
+    "KeyPair": {
+      "Description": "The name of an EC2 Key Pair to allow SSH access to the instance.",
+      "Type": "AWS::EC2::KeyPair::KeyName"
+    },
+    "VpcId": {
+      "Description": "The ID of the VPC to launch into.",
+      "Type": "AWS::EC2::VPC::Id"
+    },
+    "SubnetId": {
+      "Description": "List of IDs of the subnets to launch into (that must be within the supplied VPC)",
+      "Type": "List<AWS::EC2::Subnet::Id>"
+    },
+    "SubnetAZ": {
+      "Description": "List of availability zones of the subnet supplied (for example us-west-1a, us-west-1b)",
+      "Type": "List<AWS::EC2::AvailabilityZone::Name>"
+    }
+  },
+  "Resources": {
+    "KubernetesSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "VpcId": {"Ref": "VpcId"},
+        "GroupDescription": "Kubernetes Default SecurityGroup",
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "22",
+            "ToPort": "22",
+            "CidrIp": {"Ref": "AllowAccessFrom"}
+          }
+        ],
+        "Tags" : [
+              { "Key" : "Name", "Value" : "Kubernetes-Default-SG"},
+              { "Key" : "ServerGroup", "Value" : { "Ref" : "ServerGroup" } }
+         ]
+      }
+    },
+    "KubernetesAPISecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "VpcId": {"Ref": "VpcId"},
+        "GroupDescription": "Security group to access Kubernetes-API",
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "8080",
+            "ToPort": "8080",
+            "CidrIp": {"Ref": "AllowAccessFrom"}
+          }
+        ],
+        "Tags" : [
+              { "Key" : "Name", "Value" : "Kubernetes-API-SG"}
+         ]
+      }
+    },
+    "KubernetesIngress": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Properties": {
+        "GroupId": {"Ref": "KubernetesSecurityGroup"},
+        "IpProtocol": "tcp",
+        "FromPort": "1",
+        "ToPort": "65535",
+        "SourceSecurityGroupId": {"Ref": "KubernetesSecurityGroup"}
+      }
+    },
+    "KubernetesIngressUDP": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Properties": {
+        "GroupId": {"Ref": "KubernetesSecurityGroup"},
+        "IpProtocol": "udp",
+        "FromPort": "1",
+        "ToPort": "65535",
+        "SourceSecurityGroupId": {"Ref": "KubernetesAPISecurityGroup"}
+      }
+    },
+    "KubeNodeASGNotificationTopic": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "Subscription": [ { "Endpoint": { "Ref": "OPSEMAIL" }, "Protocol": "email" } ],
+        "TopicName" : "KubeNodeAutoScaling"
+      }
+    },
+    "KubeMasterNotificationTopic": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "Subscription": [ { "Endpoint": { "Ref": "OPSEMAIL" }, "Protocol": "email" } ],
+        "TopicName" : "KubeMasterNotification"
+      }
+    },
+    "KubernetesMasterInstance": {
+      "Type": "AWS::EC2::Instance",
+      "Properties": {
+          "BlockDeviceMappings" : [
+             {
+                "DeviceName" : "/dev/xvda",
+                "Ebs" : { "VolumeSize" : "10", "VolumeType":"gp2", "DeleteOnTermination":"true" }
+             }
+          ],
+        "NetworkInterfaces" : [{
+          "GroupSet"                 : [{"Ref": "KubernetesSecurityGroup"}, {"Ref": "KubernetesAPISecurityGroup"}], 
+          "AssociatePublicIpAddress" : "true",
+          "DeviceIndex"              : "0",
+          "DeleteOnTermination"      : "true",
+          "SubnetId"                 : { "Fn::Select" : [ "0", {"Ref": "SubnetId"}]}
+        }],
+        "ImageId": {"Fn::FindInMap" : ["RegionMap", {"Ref": "AWS::Region" }, "AMI"]},
+        "InstanceType": {"Ref": "KubernetesMasterInstanceType"},
+        "KeyName": {"Ref": "KeyPair"},
+        "IamInstanceProfile": {"Ref" : "KubernetesMasterInstanceProfile" },
+        "Tags" : [
+          {"Key" : "Name", "Value" : {"Fn::Join" : [ "-", [ {"Ref" : "AWS::StackName"}, "k8s-master" ] ]}}
+        ],
+       "UserData": { "Fn::Base64": {"Fn::Join" : ["", [
+          "#cloud-config\n\n",
+          "write_files:\n",
+          "- path: /opt/bin/waiter.sh\n",
+          "  owner: root\n",
+          "  content: |\n",
+          "    #! /usr/bin/bash\n",
+          "    until curl http://127.0.0.1:2379/v2/machines; do sleep 2; done\n",
+          "coreos:\n",
+          "  etcd2:\n",
+          "    name: master\n",
+          "    initial-cluster-token: k8s_etcd\n",
+          "    initial-cluster: master=http://$private_ipv4:2380\n",
+          "    listen-peer-urls: http://$private_ipv4:2380,http://localhost:2380\n",
+          "    initial-advertise-peer-urls: http://$private_ipv4:2380\n",
+          "    listen-client-urls: http://$private_ipv4:2379,http://localhost:2379\n",
+          "    advertise-client-urls: http://$private_ipv4:2379\n",
+          "  fleet:\n",
+          "    etcd_servers: http://localhost:2379\n",
+          "    metadata: k8srole=master\n",
+          "  flannel:\n",
+          "    etcd_endpoints: http://localhost:2379\n",
+          "  locksmithd:\n",
+          "    endpoint: http://localhost:2379\n",
+          "  units:\n",
+          "    - name: etcd2.service\n",
+          "      command: start\n",
+          "    - name: fleet.service\n",
+          "      command: start\n",
+          "    - name: etcd2-waiter.service\n",
+          "      command: start\n",
+          "      content: |\n",
+          "        [Unit]\n",
+          "        Description=etcd waiter\n",
+          "        Wants=network-online.target\n",
+          "        Wants=etcd2.service\n",
+          "        After=etcd2.service\n",
+          "        After=network-online.target\n",
+          "        Before=flanneld.service fleet.service locksmithd.service\n\n",
+          "        [Service]\n",
+          "        ExecStart=/usr/bin/bash /opt/bin/waiter.sh\n",
+          "        RemainAfterExit=true\n",
+          "        Type=oneshot\n",
+          "    - name: flanneld.service\n",
+          "      command: start\n",
+          "      drop-ins:\n",
+          "        - name: 50-network-config.conf\n",
+          "          content: |\n",
+          "            [Unit]\n",
+          "            Requires=etcd2.service\n",
+          "            [Service]\n",
+          "            ExecStartPre=-/usr/bin/etcdctl mk /coreos.com/network/config '{\"Network\": \"10.244.0.0/16\", \"Backend\": {\"Type\": \"vxlan\"}}'\n\n",
+          "    - name: docker.service\n",
+          "      command: start\n",
+          "    - name: kube-apiserver.service\n",
+          "      command: start\n",
+          "      content: |\n",
+          "        [Unit]\n",
+          "        Description=Kubernetes API Server\n",
+          "        Documentation=https://github.com/GoogleCloudPlatform/kubernetes\n",
+          "        Requires=etcd2-waiter.service etcd2.service\n",
+          "        After=etcd2-waiter.service etcd2.service\n\n",
+          "        [Service]\n",
+          "        ExecStartPre=-/usr/bin/mkdir -p /opt/bin\n",
+          "        ExecStartPre=/usr/bin/curl -L -o /opt/bin/kube-apiserver -z /opt/bin/kube-apiserver https://storage.googleapis.com/kubernetes-release/release/v1.1.3/bin/linux/amd64/kube-apiserver\n",
+          "        ExecStartPre=/usr/bin/chmod +x /opt/bin/kube-apiserver\n",
+          "        ExecStart=/opt/bin/kube-apiserver \\\n",
+          "        --insecure-bind-address=0.0.0.0 \\\n",
+          "        --insecure-port=8080 \\\n",
+          "        --service-cluster-ip-range=10.100.0.0/16 \\\n",
+          "        --etcd-servers=http://localhost:2379 \\\n",
+          "        --logtostderr=true \\\n",
+          "        --cloud-provider=aws\n",
+          "        Restart=always\n",
+          "        RestartSec=10\n",
+          "    - name: kube-controller-manager.service\n",
+          "      command: start\n",
+          "      content: |\n",
+          "        [Unit]\n",
+          "        Description=Kubernetes Controller Manager\n",
+          "        Documentation=https://github.com/GoogleCloudPlatform/kubernetes\n",
+          "        Requires=kube-apiserver.service\n",
+          "        After=kube-apiserver.service\n\n",
+          "        [Service]\n",
+          "        ExecStartPre=-/usr/bin/mkdir -p /opt/bin\n",
+          "        ExecStartPre=/usr/bin/curl -L -o /opt/bin/kube-controller-manager -z /opt/bin/kube-controller-manager https://storage.googleapis.com/kubernetes-release/release/v1.1.3/bin/linux/amd64/kube-controller-manager\n",
+          "        ExecStartPre=/usr/bin/chmod +x /opt/bin/kube-controller-manager\n",
+          "        ExecStart=/opt/bin/kube-controller-manager \\\n",
+          "        --master=127.0.0.1:8080 \\\n",
+          "        --logtostderr=true \\\n",
+          "        --cloud-provider=aws\n",
+          "        Restart=always\n",
+          "        RestartSec=10\n",
+          "    - name: kube-scheduler.service\n",
+          "      command: start\n",
+          "      content: |\n",
+          "        [Unit]\n",
+          "        Description=Kubernetes Scheduler\n",
+          "        Documentation=https://github.com/GoogleCloudPlatform/kubernetes\n",
+          "        Requires=kube-apiserver.service\n",
+          "        After=kube-apiserver.service\n\n",
+          "        [Service]\n",
+          "        ExecStartPre=-/usr/bin/mkdir -p /opt/bin\n",
+          "        ExecStartPre=/usr/bin/curl -L -o /opt/bin/kube-scheduler -z /opt/bin/kube-scheduler https://storage.googleapis.com/kubernetes-release/release/v1.1.3/bin/linux/amd64/kube-scheduler\n",
+          "        ExecStartPre=/usr/bin/chmod +x /opt/bin/kube-scheduler\n",
+          "        ExecStart=/opt/bin/kube-scheduler \\\n",
+          "        --master=127.0.0.1:8080\n",
+          "        Restart=always\n",
+          "        RestartSec=10\n",
+          "    - name: kube-register.service\n",
+          "      command: start\n",
+          "      content: |\n",
+          "        [Unit]\n",
+          "        Description=Kubernetes Registration Service\n",
+          "        Documentation=https://github.com/kelseyhightower/kube-register\n",
+          "        Requires=kube-apiserver.service fleet.service\n",
+          "        After=kube-apiserver.service fleet.service\n\n",
+          "        [Service]\n",
+          "        ExecStartPre=-/usr/bin/mkdir -p /opt/bin\n",
+          "        ExecStartPre=-/usr/bin/curl -L -o /opt/bin/kube-register -z /opt/bin/kube-register https://github.com/kelseyhightower/kube-register/releases/download/v0.0.4/kube-register-0.0.4-linux-amd64\n",
+          "        ExecStartPre=/usr/bin/chmod +x /opt/bin/kube-register\n",
+          "        ExecStart=/opt/bin/kube-register \\\n",
+          "        --metadata=k8srole=node \\\n",
+          "        --fleet-endpoint=unix:///var/run/fleet.sock \\\n",
+          "        --api-endpoint=http://127.0.0.1:8080\n",
+          "        Restart=always\n",
+          "        RestartSec=10\n",
+          "    - name: sysdig-agent.service\n",
+          "      command: start\n",
+          "      content: |\n",
+          "        [Unit]\n",
+          "         Description=Sysdig Cloud Agent\n",
+          "         After=docker.service\n",
+          "         Requires=docker.service\n",
+          "         [Service]\n",
+          "         TimeoutStartSec=0\n",
+          "         ExecStartPre=-/usr/bin/docker kill sysdig-agent\n",
+          "         ExecStartPre=-/usr/bin/docker rm sysdig-agent\n",
+          "         ExecStartPre=/usr/bin/docker pull sysdig/agent\n",
+          "         ExecStart=/usr/bin/docker run --name sysdig-agent --privileged --net host --pid host -e ACCESS_KEY=e0b0fe87-c8e8-4890-a469-222be5abaede -e [TAGS=ServerGroup:VIA\\ GO\\ ProdCloud] -v /var/run/docker.sock:/host/var/run/docker.sock -v /dev:/host/dev -v /proc:/host/proc:ro -v /boot:/host/boot:ro sysdig/agent\n",
+          "         ExecStop=/usr/bin/docker stop sysdig-agent\n",
+          "  update:\n",
+          "    group: stable\n",
+          "    reboot-strategy: off\n"
+          ]]}
+        }
+      }
+    },
+    "KubernetesNodeLaunchConfig": {
+      "Type": "AWS::AutoScaling::LaunchConfiguration",
+      "Properties": {
+        "ImageId": {"Fn::FindInMap" : ["RegionMap", {"Ref": "AWS::Region" }, "AMI" ]},
+        "InstanceType": {"Ref": "KubernetesNodeInstanceType"},
+        "KeyName": {"Ref": "KeyPair"},
+        "IamInstanceProfile": {"Ref" : "KubernetesNodeInstanceProfile" },
+        "AssociatePublicIpAddress" : "true",
+        "BlockDeviceMappings" : [
+             {
+                "DeviceName" : "/dev/xvda",
+                "Ebs" : { "VolumeSize" : "50", "VolumeType":"gp2", "DeleteOnTermination":"true" }
+             }
+          ],
+        "SecurityGroups": [{"Ref": "KubernetesSecurityGroup"}],
+        "UserData": { "Fn::Base64": {"Fn::Join" : ["", [
+          "#cloud-config\n\n",
+          "write_files:\n",
+          "  - path: /run/setup-hostname-override.sh\n",
+          "    permissions: \"0755\"\n",
+          "    content: |\n",
+          "      #!/bin/bash\n",
+          "      set -x\n",
+          "      source /etc/kube-env\n",
+          "      if [[ -z \"${HOSTNAME_OVERRIDE}\" ]]; then\n",
+          "        HOSTNAME_OVERRIDE=`curl --silent http://169.254.169.254/2007-01-19/meta-data/local-hostname`\n",
+          "      fi\n",
+          "      if [[ -z \"${HOSTNAME_OVERRIDE}\" ]]; then\n",
+          "        HOSTNAME_OVERRIDE=`hostname -f`\n",
+          "      fi\n",
+          "      echo \"HOSTNAME_OVERRIDE=${HOSTNAME_OVERRIDE}\" > /etc/hostname-override\n",
+          "  - path: /etc/kube-env\n",
+          "    permissions: 0644\n",
+          "    owner: root\n",
+          "    content: |\n",
+          "coreos:\n",
+          "  etcd2:\n",
+          "    listen-client-urls: http://localhost:2379\n",
+          "    initial-cluster: master=http://", {"Fn::GetAtt" :["KubernetesMasterInstance" , "PrivateIp"]}, ":2380\n",
+          "    proxy: on\n",
+          "  fleet:\n",
+          "    etcd_servers: http://localhost:2379\n",
+          "    metadata: k8srole=node\n",
+          "  flannel:\n",
+          "    etcd_endpoints: http://localhost:2379\n",
+          "  units:\n",
+          "    - name: etcd2.service\n",
+          "      command: start\n",
+          "    - name: fleet.service\n",
+          "      command: start\n",
+          "    - name: flanneld.service\n",
+          "      command: start\n",
+          "    - name: docker.service\n",
+          "      command: start\n",
+          "    - name: hostname-override.service\n",
+          "      command: start\n",
+          "      content: |\n",
+          "        [Unit]\n",
+          "        Description=Kubelet Hostname Override\n",
+          "        Requires=network-online.target\n",
+          "        After=network-online.target\n\n",
+          "        [Service]\n",
+          "        Type=oneshot\n",
+          "        RemainAfterExit=yes\n",
+          "        EnvironmentFile=/etc/kube-env\n",
+          "        ExecStart=/run/setup-hostname-override.sh\n",
+          "    - name: kubelet.service\n",
+          "      command: start\n",
+          "      content: |\n",
+          "        [Unit]\n",
+          "        Description=Kubernetes Kubelet\n",
+          "        Documentation=https://github.com/GoogleCloudPlatform/kubernetes\n",
+          "        Requires=hostname-override.service\n",
+          "        After=hostname-override.service\n\n",
+          "        [Service]\n",
+          "        EnvironmentFile=/etc/kube-env\n",
+          "        EnvironmentFile=/etc/hostname-override\n",
+          "        ExecStartPre=-/usr/bin/mkdir -p /opt/bin\n",
+          "        ExecStartPre=/usr/bin/curl -L -o /opt/bin/kubelet -z /opt/bin/kubelet https://storage.googleapis.com/kubernetes-release/release/v1.1.3/bin/linux/amd64/kubelet\n",
+          "        ExecStartPre=/usr/bin/chmod +x /opt/bin/kubelet\n",
+          "        ExecStart=/opt/bin/kubelet \\\n",
+          "        --api-servers=", {"Fn::GetAtt" :["KubernetesMasterInstance" , "PrivateIp"]}, ":8080 \\\n",
+          "        --address=0.0.0.0 \\\n",
+          "        --port=10250 \\\n",
+          "        --logtostderr=true \\\n",
+          "        --cadvisor-port=4194 \\\n",
+          "        --healthz-bind-address=0.0.0.0 \\\n",
+          "        --healthz-port=10248 \\\n",
+          "        --hostname-override=${HOSTNAME_OVERRIDE}\n",
+          "        Restart=always\n",
+          "        RestartSec=10\n",
+          "    - name: kube-proxy.service\n",
+          "      command: start\n",
+          "      content: |\n",
+          "        [Unit]\n",
+          "        Description=Kubernetes Proxy\n",
+          "        Documentation=https://github.com/GoogleCloudPlatform/kubernetes\n",
+          "        Requires=network-online.target\n",
+          "        After=network-online.target\n\n",
+          "        [Service]\n",
+          "        EnvironmentFile=/etc/kube-env\n",
+          "        EnvironmentFile=/etc/hostname-override\n",
+          "        ExecStartPre=-/usr/bin/mkdir -p /opt/bin\n",
+          "        ExecStartPre=/usr/bin/curl -L -o /opt/bin/kube-proxy -z /opt/bin/kube-proxy https://storage.googleapis.com/kubernetes-release/release/v1.1.3/bin/linux/amd64/kube-proxy\n",
+          "        ExecStartPre=/usr/bin/chmod +x /opt/bin/kube-proxy\n",
+          "        ExecStart=/opt/bin/kube-proxy \\\n",
+          "        --master=http://", {"Fn::GetAtt" :["KubernetesMasterInstance" , "PrivateIp"]}, ":8080 \\\n",
+          "        --proxy-mode=iptables \\\n",
+          "        --logtostderr=true \\\n",
+          "        Restart=always\n",
+          "        RestartSec=10\n",
+          "    - name: sysdig-agent.service\n",
+          "      command: start\n",
+          "      content: |\n",
+          "        [Unit]\n",
+          "         Description=Sysdig Cloud Agent\n",
+          "         After=docker.service\n",
+          "         Requires=docker.service\n",
+          "         [Service]\n",
+          "         TimeoutStartSec=0\n",
+          "         ExecStartPre=-/usr/bin/docker kill sysdig-agent\n",
+          "         ExecStartPre=-/usr/bin/docker rm sysdig-agent\n",
+          "         ExecStartPre=/usr/bin/docker pull sysdig/agent\n",
+          "         ExecStart=/usr/bin/docker run --name sysdig-agent --privileged --net host --pid host -e ACCESS_KEY=e0b0fe87-c8e8-4890-a469-222be5abaede -e [TAGS=ServerGroup:VIA\\ GO\\ ProdCloud] -v /var/run/docker.sock:/host/var/run/docker.sock -v /dev:/host/dev -v /proc:/host/proc:ro -v /boot:/host/boot:ro sysdig/agent\n",
+          "         ExecStop=/usr/bin/docker stop sysdig-agent\n",
+          "  update:\n",
+          "    group: stable\n",
+          "    reboot-strategy: off\n"
+          ]]}
+        }
+      }
+    },
+    "KubeMasterCPUAlarmHigh": {
+     "Type": "AWS::CloudWatch::Alarm",
+     "Properties": {
+        "AlarmDescription": "Scale-up if CPU > 80% for 5 minutes",
+        "MetricName": "CPUUtilization",
+        "Namespace": "AWS/EC2",
+        "Statistic": "Average",
+        "Period": "60",
+        "EvaluationPeriods": "5",
+        "Threshold": "80",
+        "AlarmActions": [ { "Ref": "KubeMasterNotificationTopic" } ],
+        "Dimensions": [{
+            "Name": "InstanceId",
+            "Value": { "Ref": "KubernetesMasterInstance" }
+          }],
+        "ComparisonOperator": "GreaterThanThreshold"
+      }
+    },
+    "KubeMasterInstanceRecoveryAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmDescription": "Trigger a recovery when instance status check fails for 5 consecutive minutes.",
+        "Namespace": "AWS/EC2" ,
+        "MetricName": "StatusCheckFailed_System",
+        "Statistic": "Minimum",
+        "Period": "60",
+        "EvaluationPeriods": "5",
+        "ComparisonOperator": "GreaterThanThreshold",
+        "Threshold": "0",
+        "AlarmActions": [ {"Fn::Join" : ["", ["arn:aws:automate:", { "Ref" : "AWS::Region" }, ":ec2:recover" ]]} ],
+        "Dimensions": [{"Name": "InstanceId","Value": {"Ref": "KubernetesMasterInstance"}}]
+      }
+    },
+    "KubeMasterInstanceEIP": {
+       "Type" : "AWS::EC2::EIP",
+       "Properties" : {
+          "InstanceId" : { "Ref": "KubernetesMasterInstance" },
+          "Domain" : "vpc"
+       }
+    },
+    "KubeNodeAutoScalingGroup": {
+      "Type": "AWS::AutoScaling::AutoScalingGroup",
+      "Properties": {
+        "AvailabilityZones": {"Ref": "SubnetAZ"},
+        "VPCZoneIdentifier": {"Ref": "SubnetId"},
+        "LaunchConfigurationName": {"Ref": "KubernetesNodeLaunchConfig"},
+        "MinSize": {"Ref": "ClusterMinSize"},
+        "MaxSize": {"Ref": "ClusterMaxSize"},
+        "DesiredCapacity": {"Ref": "ClusterDesiredSize"},
+        "HealthCheckGracePeriod": 120,
+        "NotificationConfiguration" : {
+        "TopicARN" : { "Ref" : "KubeNodeASGNotificationTopic" },
+        "NotificationTypes" : [ "autoscaling:EC2_INSTANCE_LAUNCH",
+                                "autoscaling:EC2_INSTANCE_LAUNCH_ERROR",
+                                "autoscaling:EC2_INSTANCE_TERMINATE",
+                                "autoscaling:EC2_INSTANCE_TERMINATE_ERROR"]
+        },
+        "Tags" : [
+          {"Key" : "Name", "Value" : {"Fn::Join" : [ "-", [ {"Ref" : "AWS::StackName"}, "k8s-node" ] ]}, "PropagateAtLaunch" : true},
+          {"Key" : "ServerGroup", "Value" : { "Ref" : "ServerGroup" }, "PropagateAtLaunch": true},
+          {"Key" : "Environment", "Value" : { "Ref" : "EnvType" }, "PropagateAtLaunch": true},
+          {"Key" : "OS", "Value" : { "Ref" : "OSType" }, "PropagateAtLaunch": true},
+          {"Key" : "Owner", "Value" : { "Ref" : "Owner" }, "PropagateAtLaunch": true},
+          {"Key" : "KubernetesRole", "Value" : "node", "PropagateAtLaunch" : true}
+        ]
+      }
+    },
+    "KubeNodeScaleUpPolicy" : {
+      "Type" : "AWS::AutoScaling::ScalingPolicy",
+      "Properties" : {
+        "AdjustmentType" : "ChangeInCapacity",
+        "AutoScalingGroupName" : { "Ref" : "KubeNodeAutoScalingGroup" },
+        "Cooldown" : "150",
+        "ScalingAdjustment" : "1"
+      }
+    },
+    "KubeNodeScaleDownPolicy" : {
+      "Type" : "AWS::AutoScaling::ScalingPolicy",
+      "Properties" : {
+        "AdjustmentType" : "ChangeInCapacity",
+        "AutoScalingGroupName" : { "Ref" : "KubeNodeAutoScalingGroup" },
+        "Cooldown" : "150",
+        "ScalingAdjustment" : "-1"
+      }
+    },
+    "KubeNodeCPUAlarmHigh": {
+     "Type": "AWS::CloudWatch::Alarm",
+     "Properties": {
+        "AlarmDescription": "Scale-up if CPU > 80% for 2 minutes",
+        "MetricName": "CPUUtilization",
+        "Namespace": "AWS/EC2",
+        "Statistic": "Average",
+        "Period": "60",
+        "EvaluationPeriods": "2",
+        "Threshold": "80",
+        "AlarmActions": [ { "Ref": "KubeNodeScaleUpPolicy" } ],
+        "Dimensions": [{
+            "Name": "AutoScalingGroupName",
+            "Value": { "Ref": "KubeNodeAutoScalingGroup" }
+          }],
+        "ComparisonOperator": "GreaterThanThreshold"
+      }
+    },
+    "KubeNodeCPUAlarmLow": {
+     "Type": "AWS::CloudWatch::Alarm",
+     "Properties": {
+        "AlarmDescription": "Scale-down if CPU < 40% for 5 minutes",
+        "MetricName": "CPUUtilization",
+        "Namespace": "AWS/EC2",
+        "Statistic": "Average",
+        "Period": "60",
+        "EvaluationPeriods": "5",
+        "Threshold": "40",
+        "AlarmActions": [ { "Ref": "KubeNodeScaleDownPolicy" } ],
+        "Dimensions": [{
+            "Name": "AutoScalingGroupName",
+            "Value": { "Ref": "KubeNodeAutoScalingGroup" }
+          }],
+        "ComparisonOperator": "LessThanThreshold"
+      }
+    },
+    "KubernetesMasterRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version" : "2012-10-17",
+          "Statement": [ {
+            "Effect": "Allow",
+            "Principal": {
+              "Service": [ "ec2.amazonaws.com" ]
+            },
+            "Action": [ "sts:AssumeRole" ]
+          } ]
+        },
+        "Path": "/",
+        "Policies": [ {
+          "PolicyName": "Kubernetes-Master",
+          "PolicyDocument": {
+            "Version" : "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": ["ec2:*"],
+                "Resource": ["*"]
+              },
+              {
+                "Effect": "Allow",
+                "Action": ["elasticloadbalancing:*"],
+                "Resource": ["*"]
+              },
+              {
+                "Effect": "Allow",
+                "Action": "s3:*",
+                "Resource": [
+                  "arn:aws:s3:::kubernetes-*"
+                ]
+              }
+            ]
+          }
+        } ]
+      }
+    },
+    "KubernetesMasterInstanceProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "Path": "/",
+        "Roles": [ { "Ref": "KubernetesMasterRole" } ]
+      }
+    },
+    "KubernetesNodeRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version" : "2012-10-17",
+          "Statement": [ {
+            "Effect": "Allow",
+            "Principal": {
+              "Service": [ "ec2.amazonaws.com" ]
+            },
+            "Action": [ "sts:AssumeRole" ]
+          } ]
+        },
+        "Path": "/",
+        "Policies": [ {
+          "PolicyName": "Kubernetes-Node",
+          "PolicyDocument": {
+            "Version" : "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": "s3:*",
+                "Resource": [
+                  "arn:aws:s3:::kubernetes-*"
+                ]
+              },
+              {
+                "Effect": "Allow",
+                "Action": "ec2:Describe*",
+                "Resource": "*"
+              },
+              {
+                "Effect": "Allow",
+                "Action": "ec2:AttachVolume",
+                "Resource": "*"
+              },
+              {
+                "Effect": "Allow",
+                "Action": "ec2:DetachVolume",
+                "Resource": "*"
+              },
+              {
+                "Effect": "Allow",
+                "Action": "elastiCache:*",
+                "Resource": "*"
+              }
+            ]
+          }
+        } ]
+      }
+    },
+    "KubernetesNodeInstanceProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "Path": "/",
+        "Roles": [ { "Ref": "KubernetesNodeRole" } ]
+      }
+    }
+  },
+  "Outputs": {
+    "KubernetesMasterPublicIp": {
+    "Description": "Public Ip of the newly created Kubernetes Master instance",
+      "Value": {"Fn::GetAtt": ["KubernetesMasterInstance" , "PublicIp"]}
+    }
+  }
+}
